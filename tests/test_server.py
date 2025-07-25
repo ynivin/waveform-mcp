@@ -200,6 +200,90 @@ async def test_get_wal_examples(waveform_file):
     assert "COUNTER ANALYSIS (using tb.dut.counter):" in text
 
 @pytest.mark.asyncio
+async def test_list_tools_return_format():
+    """Test that list_tools returns proper List[Tool] format."""
+    tools = await server.list_tools()
+    
+    # Should return a list of Tool objects
+    assert isinstance(tools, list)
+    assert len(tools) == 6  # We have 6 tools defined
+    
+    # Check that all items are Tool objects with required fields
+    for tool in tools:
+        assert hasattr(tool, 'name')
+        assert hasattr(tool, 'description') 
+        assert hasattr(tool, 'inputSchema')
+        assert isinstance(tool.name, str)
+        assert isinstance(tool.description, str)
+        assert isinstance(tool.inputSchema, dict)
+    
+    # Verify specific tool names exist
+    tool_names = [tool.name for tool in tools]
+    expected_tools = [
+        "get_signal_list", "get_signal_transitions", "get_waveform_length",
+        "execute_wal_expression", "get_wal_help", "get_wal_examples"
+    ]
+    for expected_tool in expected_tools:
+        assert expected_tool in tool_names
+
+@pytest.mark.asyncio
+async def test_invalid_waveform_file_paths():
+    """Test behavior with invalid waveform file paths."""
+    invalid_paths = [
+        "/nonexistent/path/file.vcd",
+        "not_a_real_file.fst", 
+        "",
+        "/tmp/corrupted.vcd"
+    ]
+    
+    for invalid_path in invalid_paths:
+        # Test get_signal_list with invalid path
+        result = await server._get_signal_list({"waveform_file": invalid_path})
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "Error:" in result[0].text or "error" in result[0].text.lower()
+        
+        # Test get_waveform_length with invalid path  
+        result = await server._get_waveform_length({"waveform_file": invalid_path})
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "Error:" in result[0].text or "error" in result[0].text.lower()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("waveform_file", WAVEFORM_FILES)
+async def test_signal_transitions_time_range_parameters(waveform_file):
+    """Test get_signal_transitions with different time range parameters."""
+    signal_name = "tb.clk"
+    
+    # Test with start_time only
+    args = {"waveform_file": waveform_file, "signal_name": signal_name, "start_time": 5}
+    result = await server._get_signal_transitions(args)
+    text = result[0].text
+    assert f"Initial value at time 5:" in text
+    assert "Time range analyzed: 5 to" in text
+    
+    # Test with both start_time and end_time
+    args = {"waveform_file": waveform_file, "signal_name": signal_name, "start_time": 10, "end_time": 20}
+    result = await server._get_signal_transitions(args)
+    text = result[0].text
+    assert "Initial value at time 10:" in text
+    assert "Time range analyzed: 10 to 20" in text
+    
+    # Test with end_time = 0 (should use full range)
+    args = {"waveform_file": waveform_file, "signal_name": signal_name, "start_time": 0, "end_time": 0}
+    result = await server._get_signal_transitions(args)
+    text = result[0].text
+    assert "Initial value at time 0:" in text
+    assert "Time range analyzed: 0 to 80" in text  # Based on known waveform length
+    
+    # Test with invalid time range (start > end)
+    args = {"waveform_file": waveform_file, "signal_name": signal_name, "start_time": 50, "end_time": 30}
+    result = await server._get_signal_transitions(args)
+    text = result[0].text
+    assert "Time range analyzed: 50 to 30" in text
+    assert "No transitions detected" in text  # Should find no transitions
+
+@pytest.mark.asyncio
 @patch('waveform_mcp.server._get_signal_list')
 async def test_call_tool_routing(mock_get_signals):
     """Test that call_tool routes to the correct function."""
@@ -210,4 +294,69 @@ async def test_call_tool_routing(mock_get_signals):
 
     result = await server.call_tool("unknown_tool", {})
     assert "Unknown tool: unknown_tool" in result[0].text
+
+@pytest.mark.asyncio
+async def test_call_tool_exception_handling():
+    """Test that call_tool handles exceptions properly."""
+    # Test with invalid arguments that should cause an exception
+    result = await server.call_tool("get_signal_list", {"invalid_arg": "value"})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert "Error:" in result[0].text
+
+@pytest.mark.asyncio
+async def test_corrupted_waveform_handling():
+    """Test error handling for corrupted/invalid waveform files."""
+    # Create a temporary file with invalid VCD content
+    import tempfile
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.vcd', delete=False) as f:
+        f.write("This is not a valid VCD file content")
+        temp_file = f.name
+    
+    try:
+        # Test various operations with corrupted file
+        result = await server._get_signal_list({"waveform_file": temp_file})
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "Error:" in result[0].text or "error" in result[0].text.lower()
+        
+        result = await server._get_waveform_length({"waveform_file": temp_file})
+        assert isinstance(result, list) 
+        assert len(result) == 1
+        assert "Error:" in result[0].text or "error" in result[0].text.lower()
+        
+        result = await server._get_signal_transitions({
+            "waveform_file": temp_file, 
+            "signal_name": "any_signal"
+        })
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "Error:" in result[0].text or "error" in result[0].text.lower()
+        
+    finally:
+        # Clean up temp file
+        import os
+        try:
+            os.unlink(temp_file)
+        except:
+            pass
+
+@pytest.mark.asyncio 
+async def test_waveform_cache_error_handling():
+    """Test that waveform cache handles loading errors properly."""
+    # Test that failed loads don't pollute the cache
+    invalid_file = "/definitely/does/not/exist.vcd"
+    
+    # Verify cache is empty initially
+    assert len(server._waveform_cache) == 0
+    
+    # Try to load invalid file - should raise exception but not cache
+    try:
+        await server._load_waveform(invalid_file)
+    except:
+        pass  # Expected to fail
+    
+    # Cache should still be empty after failed load
+    assert len(server._waveform_cache) == 0
 

@@ -12,3 +12,7 @@ src/waveform_mcp.egg-info/
 .DS_Store
 
 CLAUDE.md
+
+# Environments
+.python-version
+.venv/

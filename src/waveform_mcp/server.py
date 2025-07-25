@@ -336,12 +336,27 @@ async def _load_waveform(waveform_file: str) -> TraceContainer:
 
     Returns:
         TraceContainer: WAL container with loaded waveform data
+    
+    Raises:
+        FileNotFoundError: If the waveform file does not exist.
+        ValueError: If the waveform_file path is empty.
+        Exception: For other errors during loading.
     """
+    if not waveform_file:
+        raise ValueError("Waveform file path cannot be empty.")
+
     if waveform_file not in _waveform_cache:
         logger.info(f"Loading waveform file: {waveform_file}")
-        container = TraceContainer()
-        container.load(waveform_file)
-        _waveform_cache[waveform_file] = container
+        try:
+            container = TraceContainer()
+            container.load(waveform_file)
+            _waveform_cache[waveform_file] = container
+        except FileNotFoundError:
+            logger.error(f"Waveform file not found: {waveform_file}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to load waveform file {waveform_file}: {e}")
+            raise
     return _waveform_cache[waveform_file]
 
 
@@ -356,13 +371,16 @@ async def _get_signal_list(args: Dict[str, Any]) -> List[TextContent]:
     Returns:
         List of TextContent with formatted signal list
     """
-    waveform_file = args["waveform_file"]
+    waveform_file = args.get("waveform_file")
     pattern = args.get("pattern", "")
 
-    container = await _load_waveform(waveform_file)
-    all_signals = container.signals
-
     try:
+        if not waveform_file:
+            raise ValueError("Waveform file path cannot be empty.")
+
+        container = await _load_waveform(waveform_file)
+        all_signals = container.signals
+
         if pattern:
             regex = re.compile(pattern)
             filtered_signals = [s for s in all_signals if regex.search(s)]
@@ -384,14 +402,20 @@ async def _get_signal_list(args: Dict[str, Any]) -> List[TextContent]:
             else:
                 result_lines.append("  No signals found in waveform file.")
 
+    except (FileNotFoundError, ValueError) as e:
+        return [TextContent(type="text", text=f"Error: {e}")]
     except re.error as e:
         result_lines = [
             f"Signals in {waveform_file}:",
             f"Invalid regex pattern '{pattern}': {e}",
             "Please provide a valid regex pattern."
         ]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error processing waveform file '{waveform_file}': {e}")]
 
     return [TextContent(type="text", text="\n".join(result_lines))]
+
+
 
 
 async def _get_signal_transitions(args: Dict[str, Any]) -> List[TextContent]:
@@ -407,25 +431,30 @@ async def _get_signal_transitions(args: Dict[str, Any]) -> List[TextContent]:
     Returns:
         List of TextContent with signal transition information
     """
-    waveform_file = args["waveform_file"]
-    signal_name = args["signal_name"]
+    waveform_file = args.get("waveform_file")
+    signal_name = args.get("signal_name")
     start_time = args.get("start_time", 0)
     end_time = args.get("end_time", 0)
 
-    container = await _load_waveform(waveform_file)
-
-    if signal_name not in container.signals:
-        return [TextContent(
-            type="text",
-            text=f"Error: Signal '{signal_name}' not found in {waveform_file}"
-        )]
-
-    result_lines = [f"Signal analysis for '{signal_name}':"]
-    width = container.signal_width(signal_name)
-    bit_word = "bit" if width == 1 else "bits"
-    result_lines.append(f"  Width: {width} {bit_word}")
-
     try:
+        if not waveform_file:
+            raise ValueError("Waveform file path cannot be empty.")
+        if not signal_name:
+            raise ValueError("Signal name cannot be empty.")
+
+        container = await _load_waveform(waveform_file)
+
+        if signal_name not in container.signals:
+            return [TextContent(
+                type="text",
+                text=f"Error: Signal '{signal_name}' not found in {waveform_file}"
+            )]
+
+        result_lines = [f"Signal analysis for '{signal_name}':"]
+        width = container.signal_width(signal_name)
+        bit_word = "bit" if width == 1 else "bits"
+        result_lines.append(f"  Width: {width} {bit_word}")
+
         evaluator = SEval(container)
         actual_end_time = end_time
 
@@ -464,10 +493,14 @@ async def _get_signal_transitions(args: Dict[str, Any]) -> List[TextContent]:
         result_lines.append(f"Time range analyzed: {time_range}")
         result_lines.append(f"Total time steps checked: {current_time - start_time}")
 
+    except (FileNotFoundError, ValueError) as e:
+        return [TextContent(type="text", text=f"Error: {e}")]
     except Exception as e:
-        result_lines.append(f"  Error during transition detection: {e}")
+        result_lines = [f"Error during transition detection for '{signal_name}': {e}"]
 
     return [TextContent(type="text", text="\n".join(result_lines))]
+
+
 
 
 async def _get_waveform_length(args: Dict[str, Any]) -> List[TextContent]:
@@ -480,11 +513,13 @@ async def _get_waveform_length(args: Dict[str, Any]) -> List[TextContent]:
     Returns:
         List of TextContent with waveform length information
     """
-    waveform_file = args["waveform_file"]
-
-    container = await _load_waveform(waveform_file)
+    waveform_file = args.get("waveform_file")
 
     try:
+        if not waveform_file:
+            raise ValueError("Waveform file path cannot be empty.")
+
+        container = await _load_waveform(waveform_file)
         evaluator = SEval(container)
         waveform_length = evaluator.eval(read_wal_sexpr("(length (find true))"))
         
@@ -495,6 +530,8 @@ async def _get_waveform_length(args: Dict[str, Any]) -> List[TextContent]:
             f"Method: WAL (length (find true))"
         ]
 
+    except (FileNotFoundError, ValueError) as e:
+        return [TextContent(type="text", text=f"Error: {e}")]
     except Exception as e:
         result_lines = [
             f"Waveform file: {waveform_file}",
@@ -502,6 +539,8 @@ async def _get_waveform_length(args: Dict[str, Any]) -> List[TextContent]:
         ]
 
     return [TextContent(type="text", text="\n".join(result_lines))]
+
+
 
 
 async def _execute_wal_expression(args: Dict[str, Any]) -> List[TextContent]:
@@ -515,12 +554,16 @@ async def _execute_wal_expression(args: Dict[str, Any]) -> List[TextContent]:
     Returns:
         List of TextContent with expression execution results
     """
-    waveform_file = args["waveform_file"]
-    expression = args["expression"]
-
-    container = await _load_waveform(waveform_file)
+    waveform_file = args.get("waveform_file")
+    expression = args.get("expression")
 
     try:
+        if not waveform_file:
+            raise ValueError("Waveform file path cannot be empty.")
+        if not expression:
+            raise ValueError("WAL expression cannot be empty.")
+
+        container = await _load_waveform(waveform_file)
         evaluator = SEval(container)
         parsed_expr = read_wal_sexpr(expression)
         result = evaluator.eval(parsed_expr)
@@ -541,9 +584,11 @@ async def _execute_wal_expression(args: Dict[str, Any]) -> List[TextContent]:
             if len(result) > 5:
                 result_lines.append(f"  ... and {len(result) - 5} more")
 
+    except (FileNotFoundError, ValueError) as e:
+        return [TextContent(type="text", text=f"Error: {e}")]
     except Exception as e:
         # Get signal-specific suggestions
-        all_signals = list(container.signals) if container else []
+        all_signals = list(_waveform_cache[waveform_file].signals) if waveform_file in _waveform_cache else []
         suggestions = _get_wal_error_suggestions(str(e), all_signals)
         
         result_lines = [
@@ -558,6 +603,8 @@ async def _execute_wal_expression(args: Dict[str, Any]) -> List[TextContent]:
         ]
 
     return [TextContent(type="text", text="\n".join(result_lines))]
+
+
 
 
 async def _get_wal_help(args: Dict[str, Any]) -> List[TextContent]:
