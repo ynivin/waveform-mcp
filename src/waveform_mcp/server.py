@@ -8,7 +8,8 @@ Supported formats: VCD, FST (via WAL)
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+import os
+from typing import Any, Dict, List, Tuple
 import re
 
 from mcp.server import Server
@@ -26,7 +27,8 @@ logging.basicConfig(level=logging.INFO)
 
 app = Server("waveform-mcp")
 
-_waveform_cache: Dict[str, TraceContainer] = {}
+# Cache: {file_path: (modification_time, TraceContainer)}
+_waveform_cache: Dict[str, Tuple[float, TraceContainer]] = {}
 
 # WAL Documentation and Examples
 WAL_DOCUMENTATION = {
@@ -329,7 +331,7 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]):
 
 
 async def _load_waveform(waveform_file: str) -> TraceContainer:
-    """Load waveform file using WAL, with caching.
+    """Load waveform file using WAL, with caching that checks file modification time.
 
     Args:
         waveform_file: Path to waveform file (.vcd, .fst, etc.)
@@ -345,19 +347,36 @@ async def _load_waveform(waveform_file: str) -> TraceContainer:
     if not waveform_file:
         raise ValueError("Waveform file path cannot be empty.")
 
-    if waveform_file not in _waveform_cache:
-        logger.info(f"Loading waveform file: {waveform_file}")
-        try:
-            container = TraceContainer()
-            container.load(waveform_file)
-            _waveform_cache[waveform_file] = container
-        except FileNotFoundError:
-            logger.error(f"Waveform file not found: {waveform_file}")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to load waveform file {waveform_file}: {e}")
-            raise
-    return _waveform_cache[waveform_file]
+    try:
+        current_mtime = os.path.getmtime(waveform_file)
+    except FileNotFoundError:
+        logger.error(f"Waveform file not found: {waveform_file}")
+        raise
+    except OSError as e:
+        logger.error(f"Error accessing waveform file {waveform_file}: {e}")
+        raise
+
+    # Check if file is cached and still current
+    if waveform_file in _waveform_cache:
+        cached_mtime, container = _waveform_cache[waveform_file]
+        if cached_mtime == current_mtime:
+            logger.debug(f"Using cached waveform: {waveform_file}")
+            return container
+        else:
+            logger.info(f"Waveform file {waveform_file} changed (mtime: {cached_mtime} -> {current_mtime}), reloading...")
+
+    # Load fresh copy
+    logger.info(f"Loading waveform file: {waveform_file}")
+    try:
+        container = TraceContainer()
+        container.load(waveform_file)
+        _waveform_cache[waveform_file] = (current_mtime, container)
+        logger.debug(f"Cached waveform {waveform_file} with mtime: {current_mtime}")
+    except Exception as e:
+        logger.error(f"Failed to load waveform file {waveform_file}: {e}")
+        raise
+    
+    return container
 
 
 async def _get_signal_list(args: Dict[str, Any]) -> List[TextContent]:
@@ -588,7 +607,7 @@ async def _execute_wal_expression(args: Dict[str, Any]) -> List[TextContent]:
         return [TextContent(type="text", text=f"Error: {e}")]
     except Exception as e:
         # Get signal-specific suggestions
-        all_signals = list(_waveform_cache[waveform_file].signals) if waveform_file in _waveform_cache else []
+        all_signals = list(_waveform_cache[waveform_file][1].signals) if waveform_file in _waveform_cache else []
         suggestions = _get_wal_error_suggestions(str(e), all_signals)
         
         result_lines = [
