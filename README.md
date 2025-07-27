@@ -114,7 +114,7 @@ For WAL expression syntax and advanced examples, see the [WAL documentation](htt
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - `cmake` (for FST support)
 - [WAL (Waveform Analysis Language)](https://github.com/ics-jku/wal) >= 0.8.0
 - MCP Python SDK >= 1.0.0
