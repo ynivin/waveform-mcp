@@ -114,11 +114,11 @@ For WAL expression syntax and advanced examples, see the [WAL documentation](htt
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.9+
 - `cmake` (for FST support)
 - [WAL (Waveform Analysis Language)](https://github.com/ics-jku/wal) >= 0.8.0
 - MCP Python SDK >= 1.0.0
 
 ## License
 
-See the [WAL repository](https://github.com/ics-jku/wal) for license details.
+BSD 3-Clause License. See [LICENSE](LICENSE) for details.

@@ -9,7 +9,7 @@ description = "MCP server for RTL waveform analysis using WAL"
 readme = "README.md"
 authors = [{name = "Yossi Nivin"}]
 license = {text = "BSD-3-Clause"}
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "mcp>=1.0.0",
     "wal-lang>=0.8.0",
@@ -36,9 +36,9 @@ asyncio_mode = "auto"
 
 [tool.black]
 line-length = 88
-target-version = ['py310']
+target-version = ['py39']
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py39"
 line-length = 88
 select = ["E", "F", "W", "I", "N", "UP"]
